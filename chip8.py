@@ -1,10 +1,7 @@
 import random
-from datetime import datetime
 import os
-import pygame, sys
-from pygame.locals import *
 
-class Chip8:
+class PETChip8CPU:
     def __init__(self, speed):
         #The chip8 had 4096 (0x1000) memory locations, all of which are 1 byte
         self.program_counter = 0x200 #The chip 8 interpreter itself occupies the first 512 bytes
@@ -22,13 +19,12 @@ class Chip8:
         self.keys = [False] * 16 #The chip8 has a hex-based keypad with 16 keys
         self.blocking_keypress = False #Set to true if the chip8 is blocking and waiting for a keypress
         self.draw_flag = True #Says that we updated the screen so we need to redraw
-        self.last_delay = 0
         self.cycle_deltasum = 0
         self.delay_deltasum = 0
         self.sound_deltasum = 0
         self.lastdisasm = ""
         self.CYCLE_LENGTH_MICROS = speed
-        random.seed() #Seed the RNG
+        random.seed()
         self.memory[0:80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, 
                           0x20, 0x60, 0x20, 0x20, 0x70,
                           0xF0, 0x10, 0xF0, 0x80, 0xF0,
@@ -45,13 +41,14 @@ class Chip8:
                           0xE0, 0x90, 0x90, 0x90, 0xE0,
                           0xF0, 0x80, 0xF0, 0x80, 0xF0,
                           0xF0, 0x80, 0xF0, 0x80, 0x80]
-        return 
+        return
+    
     def create_word(self, highbyte, lowbyte):
         return (highbyte << 8) | lowbyte
+    
     def split_word(self, word):
         return (word >> 8, word & 0xF0)
-    def clamp_val(self, val):
-        return val & 0xFF
+
     def execute_zero_series(self, opcode):
         if opcode == 0x00E0:
             self.graphics[0:2048] = [0] * 2048 #Clears the screen
@@ -68,11 +65,13 @@ class Chip8:
             self.program_counter = opcode & 0x0FFF
             self.lastdisasm = "Old style opcode jump to: " + str(self.program_counter)
         return
+    
     def execute_one_series(self, opcode):
         #Jump to opcode at NNN; I guess the modern equivalent of the other command?
         self.program_counter = opcode & 0x0FFF
         self.lastdisasm = "Program counter set to: " + str(self.program_counter)
         return
+    
     def execute_two_series(self, opcode):
         #Call subroutine at NNN; Increments the stack pointer then puts the current program counter at the top of the stack, then sets the program counter to NNN
         self.stack_pointer += 1
@@ -80,6 +79,7 @@ class Chip8:
         self.program_counter = opcode & 0x0FFF
         self.lastdisasm = "Called subroutine at: " + str(self.program_counter)
         return
+    
     def execute_three_series(self, opcode):
         #Skip next instruction if Vx == kk
         register = (opcode & 0x0F00) >> 8
@@ -91,6 +91,7 @@ class Chip8:
             self.lastdisasm = "Did not skip program counter because register " + str(register) + " is not equal to " + str(data)
             self.program_counter += 2
         return
+    
     def execute_four_series(self,opcode):
         #Skip next instruction if Vx != kk
         register = (opcode & 0x0F00) >> 8
@@ -102,6 +103,7 @@ class Chip8:
             self.program_counter += 2
             self.lastdisasm = "Did not skip program counter because register " + str(register) + " is equal to " + str(data)
         return
+    
     def execute_five_series(self, opcode):
         #Skip next instruction if Vx == Vy
         register1 = (opcode & 0x0F00) >> 8
@@ -112,7 +114,8 @@ class Chip8:
         else:
             self.program_counter += 2
             self.lastdisasm = "Did not skip program counter since register " + str(register1) + " was not equal to " + str(register2)
-        return        
+        return
+    
     def execute_six_series(self, opcode):
         #Set Vx = kk
         register = (opcode & 0x0F00) >> 8
@@ -121,6 +124,7 @@ class Chip8:
         self.program_counter += 2
         self.lastdisasm = "Register " + str(register) + " set to " + str(data)
         return
+    
     def execute_seven_series(self, opcode):
         #Set Vx += kk
         register = (opcode & 0x0F00) >> 8
@@ -130,6 +134,7 @@ class Chip8:
         self.program_counter += 2
         self.lastdisasm = "Register " + str(register) + " set to " + str(value) + " by adding " + str(data)
         return
+    
     def execute_eight_series(self, opcode):
         #A lot of different instructions here
         last_byte = opcode & 0x000F
@@ -143,19 +148,19 @@ class Chip8:
             #8xy1 Set Vx |= Vy
             register1 = (opcode & 0x0F00) >> 8
             register2 = (opcode & 0x00F0) >> 4
-            self.set_register(register1, self.clamp_val(self.get_register(register1) | self.get_register(register2)))
+            self.set_register(register1, (self.get_register(register1) | self.get_register(register2)) & 0xFF)
             self.lastdisasm  = "Register " + str(register1) + " OR register " + str(register2) + " equals " + str(self.get_register(register1)) + " stored in register " + str(register1)
         elif last_byte == 0x2:
             #8xy2 Set Vx &= Vy
             register1 = (opcode & 0x0F00) >> 8
             register2 = (opcode & 0x00F0) >> 4
-            self.set_register(register1, self.clamp_val(self.get_register(register1) & self.get_register(register2)))
+            self.set_register(register1, (self.get_register(register1) & self.get_register(register2)) & 0xFF)
             self.lastdisasm  = "Register " + str(register1) + " AND register " + str(register2) + " equals " + str(self.get_register(register1)) + " stored in register " + str(register1)
         elif last_byte == 0x3:
             #8xy3 Set Vx ^= Vy
             register1 = (opcode & 0x0F00) >> 8
             register2 = (opcode & 0x00F0) >> 4
-            self.set_register(register1, self.clamp_val(self.get_register(register1) ^ self.get_register(register2)))
+            self.set_register(register1, (self.get_register(register1) ^ self.get_register(register2)) & 0xFF)
             self.lastdisasm  = "Register " + str(register1) + " XOR register " + str(register2) + " equals " + str(self.get_register(register1)) + " stored in register " + str(register1)
         elif last_byte == 0x4:
             #8xy4 Set Vx = Vx + Vy, with a carry
@@ -205,6 +210,7 @@ class Chip8:
             self.lastdisasm = "Bitshifted register " + str(register1) + " by 1 to left to get " + str(self.get_register(register1)) + " and flag register equals " + str(self.get_register(15))
         self.program_counter += 2
         return
+    
     def execute_nine_series(self, opcode):
         #Skip next instruction if Vx != Vy
         register1 = (opcode & 0x0F00) >> 8
@@ -216,16 +222,19 @@ class Chip8:
             self.program_counter += 2
             self.lastdisasm = "Didn't skip next instruction because " + str(register1) + " IS equal to " + str(register2)   
         return
+    
     def execute_ten_series(self, opcode):
         #Set I = nnn
         self.address_register = opcode & 0x0FFF
         self.program_counter += 2
         self.lastdisasm = "Set address register to " + str(self.address_register)
         return
+    
     def execute_eleven_series(opcode):
         self.program_counter = self.get_register(0) + (opcode & 0x0FFF)
         self.lastdisasm = "Set program counter to " + str(self.program_counter) + " by adding " + str(opcode & 0x0FFF)
         return
+    
     def execute_twelve_series(self, opcode):
         random_byte = random.randint(0,255)
         register = (opcode & 0x0F00) >> 8
@@ -235,11 +244,13 @@ class Chip8:
         self.program_counter += 2
         self.lastdisasm = "Set register " + str(register) + " to " + str(random_byte) + " AND " + str(kk) + "= " + str(data & 0xFF)
         return
+    
     def wrap_gfx(self, val):
         if val < 2048:
             return val
         else:
             return val & 0x6FF
+        
     def execute_thirteen_series(self, opcode):
         #Display n byte sprite starting at memory location I at Vx, Vy
         register1 = (opcode & 0x0F00) >> 8
@@ -260,6 +271,7 @@ class Chip8:
         self.program_counter += 2
         self.lastdisasm = "Displayed " + str(height) + " byte sprite at memory location " + str(self.address_register) + " starting at coordinates " + str(x) + "," + str(y) + " and collision flag is now " + str(self.get_register(15))
         return
+    
     def execute_fourteen_series(self, opcode):
         last_byte = opcode & 0x00FF
         register = (opcode & 0x0F00) >> 8
@@ -282,6 +294,7 @@ class Chip8:
                 self.lastdisasm = "Didn't skip next instruction because key with value of " + str(self.get_register(register)) + " was pressed."
                 self.keys[self.get_register(register)] = False
         return
+    
     def execute_fifteen_series(self, opcode):
         last_byte = opcode & 0x00FF
         register = (opcode & 0x0F00) >> 8
@@ -296,12 +309,10 @@ class Chip8:
         elif last_byte == 0x15:
             #Set delay timer = Vx
             self.delay_timer = self.get_register(register)
-            self.last_delay = datetime.now().microsecond
             self.lastdisasm = "Set the delay timer to the value of " + str(self.get_register(register)) + " held in register " + str(register)
         elif last_byte == 0x18:
             #Set sound timer = Vx
             self.sound_timer = self.get_register(register)
-            self.last_sound = datetime.now().microsecond
             self.lastdisasm = "Set the sound timer to the value of " + str(self.get_register(register)) + " held in register " + str(register)
         elif last_byte == 0x1E:
             #Set I to I+Vx
@@ -329,6 +340,7 @@ class Chip8:
             self.lastdisasm = "Read registers 0 through " + str(register) + " starting at memory location " + str(self.address_register)   
         self.program_counter += 2
         return
+    
     def execute_opcode(self, opcode):
         if opcode < 0x1000:
             self.execute_zero_series(opcode)
@@ -363,11 +375,14 @@ class Chip8:
         elif opcode >= 0xF000:
             self.execute_fifteen_series(opcode)
         return
+    
     def get_register(self, register):
         return self.registers["V" + str(register)]
+    
     def set_register(self, register, value):
         self.registers["V" + str(register)] = value        
         return
+    
     def emulate_instruction(self, delta):
         #Fetches, decodes and executes the opcode and updates the timers
         self.cycle_deltasum += delta
@@ -390,82 +405,23 @@ class Chip8:
         else:
             return False
         return True
-    def process_input(self, inkeys):
-        self.keys[0] = inkeys[pygame.K_x]
-        self.keys[1] = inkeys[pygame.K_1]
-        self.keys[2] = inkeys[pygame.K_2]
-        self.keys[3] = inkeys[pygame.K_3]
-        self.keys[4] = inkeys[pygame.K_q]
-        self.keys[5] = inkeys[pygame.K_w]
-        self.keys[6] = inkeys[pygame.K_e]
-        self.keys[7] = inkeys[pygame.K_a]
-        self.keys[8] = inkeys[pygame.K_s]
-        self.keys[9] = inkeys[pygame.K_d]
-        self.keys[10] = inkeys[pygame.K_z]
-        self.keys[11] = inkeys[pygame.K_c]
-        self.keys[12] = inkeys[pygame.K_4]
-        self.keys[13] = inkeys[pygame.K_r]
-        self.keys[14] = inkeys[pygame.K_f]
-        self.keys[15] = inkeys[pygame.K_v]
-        return
+    
     def clear_input(self):
         for i in range(0,16):
             self.keys[i] = False
+        return
+    
     def load(self, filename):
         romsize = os.stat(filename).st_size
         fin = open(filename, "rb")
         self.memory[512:512+romsize] = list(fin.read())
         fin.close()
         return
+    
     def print_state(self):
         print(self.registers)
         print("Stack pointer", self.stack_pointer)
         print("Program counter", self.program_counter)
         print("Address register", self.address_register)
         print("Am I blocking?", self.blocking_keypress)
-
-def get_color(val):
-    if val == 0:
-        return pygame.Color(0,0,0)
-    else:
-        return pygame.Color(255,255,255)
-
-def draw_screen(emulator, surface):
-    for i in range(0, 32):
-        for j in range(0,64):
-            surface.fill(get_color(emulator.graphics[(i * 64) + j]), pygame.Rect(j*16, i*16 , 16, 16))
-    return
-
-if __name__ == '__main__':
-    myemu = Chip8(2000)
-    name = "PONG2"
-    myemu.load(name)
-    pygame.init()
-    DISPLAY_SURF = pygame.display.set_mode((1024,512))
-    pygame.display.set_caption("Chip-8 Emulator -" + name)
-    start = datetime.now()
-    key_delay = 0
-    key_threshold = 100000
-    pygame.key.set_repeat(1,2)
-    while True:
-        newdt = datetime.now()
-        delta_us = newdt - start
-        key_delay += delta_us.microseconds
-        start = newdt
-        if not myemu.blocking_keypress:
-            myemu.emulate_instruction(delta_us.microseconds)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            elif (event.type == pygame.KEYDOWN) and (key_delay > key_threshold):
-                myemu.blocking_keypress = False
-                myemu.process_input(pygame.key.get_pressed())
-                key_delay = 0
-        if (myemu.draw_flag):
-            DISPLAY_SURF.fill(pygame.Color(0,0,0))
-            draw_screen(myemu, DISPLAY_SURF)
-            myemu.draw_flag = False
-            pygame.display.update()
-        pygame.time.delay(1)
-            
+        return
