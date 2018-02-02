@@ -1,5 +1,6 @@
 import random
 import os
+import math
 
 class PETChip8CPU:
     def __init__(self, speed):
@@ -9,7 +10,7 @@ class PETChip8CPU:
         self.call_stack = 0xEA0 #The 96 bytes below that are reserved for call stack, internal use and other variables
         #The chip8 has 16 bit data registers named from V0 to VF. I decided to store it as a dictionary instead of a list for semantic purposes
         self.registers = {"V0":0, "V1":0, "V2":0, "V3":0, "V4":0, "V5":0, "V6":0, "V7":0, "V8":0, "V9":0, "V10":0, "V11":0, "V12":0, "V13":0, "V14":0, "V15":0}
-        self.address_register = int(0) #There is also an address register called I, I decided to store this separately
+        self.address_register = 0 #There is also an address register called I, I decided to store this separately
         self.stack_pointer = 0
         self.stack = [0] * 16 #The stack is used to store return addresses when subroutines are called
         self.memory = [0] * 4096 #The chip8 has 4k of memory in total
@@ -22,6 +23,7 @@ class PETChip8CPU:
         self.cycle_deltasum = 0
         self.delay_deltasum = 0
         self.sound_deltasum = 0
+        self.rts_keypress = -1 #The register number to store the blocking keypress value in
         self.lastdisasm = ""
         self.CYCLE_LENGTH_MICROS = speed
         random.seed()
@@ -166,12 +168,13 @@ class PETChip8CPU:
             #8xy4 Set Vx = Vx + Vy, with a carry
             register1 = (opcode & 0x0F00) >> 8
             register2 = (opcode & 0x00F0) >> 4
-            self.set_register(register1, self.get_register(register1) + self.get_register(register2))
-            if self.get_register(register1) > 255:
-                self.set_register(register1, self.get_register(register1) & 0xFF)
+            data = self.get_register(register1) + self.get_register(register2)
+            if data > 255:
+                self.set_register(register1, data & 0xFF)
                 self.set_register(15,1)
             else:
                 self.set_register(15,0)
+                self.set_register(register1, data)
             self.lastdisasm = "Register " + str(register1) + " added to register " + str(register2) + " to give value of " + str(self.get_register(register1)) + " with carry = " + str(self.get_register(15))
         elif last_byte == 0x5:
             #8xy5 Set Vx = Vx - Vy
@@ -188,25 +191,30 @@ class PETChip8CPU:
         elif last_byte == 0x6:
             #8xy6 Vx = Vx >> 1, VF becomes the value of LSB of Vx before shift
             register1 = (opcode & 0x0F00) >> 8
-            self.set_register(15, self.get_register(register1) & 0x01)
-            self.set_register(register1, (self.get_register(register1) >> 1) & 0xFF)
+            data = self.get_register(register1)
+            self.set_register(15, data & 0x01)
+            self.set_register(register1, int(math.floor(data >> 1)) & 0xFF)
             self.lastdisasm = "Bitshifted register " + str(register1) + " by 1 to right to get " + str(self.get_register(register1)) + " and flag register equals " + str(self.get_register(15))
         elif last_byte == 0x7:
-            #8xy7 SUBN Vx, Vy
+            #8xy7 Vx = Vy - Vx, set VF = NOT borrow
             register1 = (opcode & 0x0F00) >> 8
             register2 = (opcode & 0x00F0) >> 4
-            self.set_register(register1, self.get_register(register2) - self.get_register(register1))
-            if self.get_register(register2) > self.get_register(register1):
+            reg1data = self.get_register(register1)
+            reg2data = self.get_register(register2)
+            data = reg2data - reg1data
+            self.set_register(register1, data & 0xFF)
+            if reg2data > reg1data:
                 self.set_register(15,1)
-                self.lastdisasm = "Something complex done here"
+                self.lastdisasm = "NOT BORROW for OPCODE 8xy7"
             else:
                 self.set_register(15,0)
-                self.lastdisasm = "Something complex done here"
+                self.lastdisasm = "BORROW for OPCODE 8xy7"
         elif last_byte == 0xE:
             #8xyE Vx = Vx << 1, VF becomes the value of MSB of Vx before shift
             register1 = (opcode & 0x0F00) >> 8
-            self.set_register(15, self.get_register(register1) & 0x8000)
-            self.set_register(register1, (self.get_register(register1) << 1) & 0xFF)
+            data = self.get_register(register1)
+            self.set_register(15,data & 0x80)
+            self.set_register(register1, (data << 1) & 0xFF)
             self.lastdisasm = "Bitshifted register " + str(register1) + " by 1 to left to get " + str(self.get_register(register1)) + " and flag register equals " + str(self.get_register(15))
         self.program_counter += 2
         return
@@ -224,18 +232,20 @@ class PETChip8CPU:
         return
     
     def execute_ten_series(self, opcode):
-        #Set I = nnn
+        #BNNN - Set I = nnn
         self.address_register = opcode & 0x0FFF
         self.program_counter += 2
         self.lastdisasm = "Set address register to " + str(self.address_register)
         return
     
     def execute_eleven_series(opcode):
+        #Bnnn - Jump to location nnn + V0
         self.program_counter = self.get_register(0) + (opcode & 0x0FFF)
         self.lastdisasm = "Set program counter to " + str(self.program_counter) + " by adding " + str(opcode & 0x0FFF)
         return
     
     def execute_twelve_series(self, opcode):
+        #Cxkk - Set Vx to random byte AND kk
         random_byte = random.randint(0,255)
         register = (opcode & 0x0F00) >> 8
         kk = opcode & 0x00FF
@@ -276,7 +286,7 @@ class PETChip8CPU:
         last_byte = opcode & 0x00FF
         register = (opcode & 0x0F00) >> 8
         if last_byte == 0x9E:
-            #Skip next instruction if key with value of Vx is pressed
+            #Ex9E - Skip next instruction if key with value of Vx is pressed
             if self.keys[self.get_register(register)] == True:
                 self.program_counter += 4
                 self.lastdisasm = "Skipped next instruction because key with value of " + str(self.get_register(register)) + " was pressed."
@@ -285,7 +295,7 @@ class PETChip8CPU:
                 self.program_counter += 2
                 self.lastdisasm = "Didn't skip next instruction because key with value of " + str(self.get_register(register)) + " was NOT pressed."
         elif last_byte == 0xA1:
-            #Skip next instruction if key with value of Vx is NOT pressed
+            #ExA1 - Skip next instruction if key with value of Vx is NOT pressed
             if self.keys[self.get_register(register)] == False:
                 self.program_counter += 4
                 self.lastdisasm = "Skipped next instruction because key with value of " + str(self.get_register(register)) + " was NOT pressed."
@@ -299,42 +309,44 @@ class PETChip8CPU:
         last_byte = opcode & 0x00FF
         register = (opcode & 0x0F00) >> 8
         if last_byte == 0x07:
-            #Set Vx = delay timer value
+            #Fx07 - Set Vx = delay timer value
             self.set_register(register, self.delay_timer)
             self.lastdisasm = "Put timer value of " + str(self.delay_timer) + " in register " + str(register)
         elif last_byte == 0x0A:
-            #Wait for a key press, store the value of the key in Vx
+            #Fx0A - Wait for a key press, store the value of the key in Vx
             self.blocking_keypress = True
+            self.rts_keypress = register
             self.lastdisasm = "Waiting for keypress - blocking version"
         elif last_byte == 0x15:
-            #Set delay timer = Vx
+            #Fx15 - Set delay timer = Vx
             self.delay_timer = self.get_register(register)
             self.lastdisasm = "Set the delay timer to the value of " + str(self.get_register(register)) + " held in register " + str(register)
         elif last_byte == 0x18:
-            #Set sound timer = Vx
+            #Fx18 - Set sound timer = Vx
             self.sound_timer = self.get_register(register)
             self.lastdisasm = "Set the sound timer to the value of " + str(self.get_register(register)) + " held in register " + str(register)
         elif last_byte == 0x1E:
-            #Set I to I+Vx
+            #Fx1E - Set I to I+Vx
             self.address_register += self.get_register(register)
             self.lastdisasm = "Incremented I by the value in register " + str(register) + " to set address_register to " + str(self.address_register)
         elif last_byte == 0x29:
-            #Set I to memory location of sprite for digit Vx
-            self.address_register = self.get_register(register) * 5
+            #Fx29 - Set I to memory location of sprite for digit Vx
+            self.address_register = self.get_register(register) * 5 #Remember we stored this data from 0 to 80 in the memory array
             self.lastdisasm = "Set address register to " + str(self.address_register) + " to get sprite for character " + str(self.get_register(register)) + " stored in register " + str(register) 
         elif last_byte == 0x33:
-            #Store the BCD representation of Vx in memory locations I to I+2
-            self.memory[self.address_register] = int(self.get_register(register)/100)
-            self.memory[self.address_register + 1] = int((self.get_register(register)/10) % 10)
-            self.memory[self.address_register + 2] = int((self.get_register(register)/100) % 10)
+            #Fx33 - Store the BCD representation of Vx in memory locations I to I+2
+            data = self.get_register(register)
+            self.memory[self.address_register] = int(data/100)
+            self.memory[self.address_register + 1] = int((data/10) % 10)
+            self.memory[self.address_register + 2] = int((data/100) % 10)
             self.lastdisasm = "Binary coded decimal of " + str(self.get_register(register)) + " stored starting at memory location " + str(self.address_register) + " as " + str(self.memory[self.address_register]) + "," + str(self.memory[self.address_register+1]) + "," + str(self.memory[self.address_register+2])
         elif last_byte == 0x55:
-            #Store registers V0 through Vx in memory starting at location I
+            #Fx55 - Store registers V0 through Vx in memory starting at location I
             for i in range(0, register + 1):
                 self.memory[self.address_register + i] = self.get_register(i)
             self.lastdisasm = "Stored registers 0 through " + str(register) + " starting at memory location " + str(self.address_register)    
         elif last_byte == 0x65:
-            #Read registers V0 through Vx from memory starting at location I
+            #Fx65 - Read registers V0 through Vx from memory starting at location I
             for i in range(0, register + 1):
                 self.set_register(i, self.memory[self.address_register + i])
             self.lastdisasm = "Read registers 0 through " + str(register) + " starting at memory location " + str(self.address_register)   
@@ -404,12 +416,6 @@ class PETChip8CPU:
             return True
         else:
             return False
-        return True
-    
-    def clear_input(self):
-        for i in range(0,16):
-            self.keys[i] = False
-        return
     
     def load(self, filename):
         romsize = os.stat(filename).st_size
@@ -424,4 +430,19 @@ class PETChip8CPU:
         print("Program counter", self.program_counter)
         print("Address register", self.address_register)
         print("Am I blocking?", self.blocking_keypress)
+        return
+
+    def draw_screen(self): #To be implemented by the derived class
+        return
+
+    def process_input(self,inkeys): #To be implemented by the derived class
+        return
+
+    def process_blocking_keypress(self, key): #To be implemented by the derived class
+        return
+
+    def run(self):  #To be implemented by the derived class
+        return
+
+    def event_handler_loop(self): #To be implemented by the derived class
         return

@@ -5,67 +5,87 @@ import os
 import pygame, sys
 from pygame.locals import *
 
-def get_color(val):
-    if val == 0:
-        return pygame.Color(0,0,0)
-    else:
-        return pygame.Color(255,255,255)
-
-def draw_screen(emulator, surface):
-    for i in range(0, 32):
-        for j in range(0,64):
-            surface.fill(get_color(emulator.graphics[(i * 64) + j]), pygame.Rect(j*16, i*16 , 16, 16))
-    return
-
-def process_input(emulator, inkeys):
-    emulator.keys[0] = inkeys[pygame.K_x]
-    emulator.keys[1] = inkeys[pygame.K_1]
-    emulator.keys[2] = inkeys[pygame.K_2]
-    emulator.keys[3] = inkeys[pygame.K_3]
-    emulator.keys[4] = inkeys[pygame.K_q]
-    emulator.keys[5] = inkeys[pygame.K_w]
-    emulator.keys[6] = inkeys[pygame.K_e]
-    emulator.keys[7] = inkeys[pygame.K_a]
-    emulator.keys[8] = inkeys[pygame.K_s]
-    emulator.keys[9] = inkeys[pygame.K_d]
-    emulator.keys[10] = inkeys[pygame.K_z]
-    emulator.keys[11] = inkeys[pygame.K_c]
-    emulator.keys[12] = inkeys[pygame.K_4]
-    emulator.keys[13] = inkeys[pygame.K_r]
-    emulator.keys[14] = inkeys[pygame.K_f]
-    emulator.keys[15] = inkeys[pygame.K_v]
-    return
-
-if __name__ == '__main__':
-    myemu = chip8.PETChip8CPU(2000)
-    name = "PONG2"
-    myemu.load(name)
-    pygame.init()
-    DISPLAY_SURF = pygame.display.set_mode((1024,512))
-    pygame.display.set_caption("Chip-8 Emulator -" + name)
-    start = datetime.now()
-    key_delay = 0
-    key_threshold = 100000
-    pygame.key.set_repeat(1,2)
-    while True:
-        newdt = datetime.now()
-        delta_us = newdt - start
-        key_delay += delta_us.microseconds
-        start = newdt
-        if not myemu.blocking_keypress:
-            myemu.emulate_instruction(delta_us.microseconds)
+class SDLChip8(chip8.PETChip8CPU):
+    def __init__(self, spd, filename):
+        super().__init__(spd)
+        super(SDLChip8, self).load(filename)        
+        pygame.init()
+        pygame.display.set_caption("Chip-8 Emulator -" + filename)
+        self.DISPLAY_SURF = pygame.display.set_mode((1024,512))
+        self.key_delay = 0
+        self.key_threshold = 100000
+        pygame.key.set_repeat(1,2)
+        self.key_array = [pygame.K_x, pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_q, pygame.K_w, pygame.K_e, pygame.K_a, pygame.K_s, pygame.K_d, pygame.K_z,
+                          pygame.K_c, pygame.K_4, pygame.K_r, pygame.K_f, pygame.K_v]
+    def process_input(self, inkeys):
+        for i in range(0, len(self.key_array)):
+            self.keys[i] = inkeys[self.key_array[i]]
+        return
+    def draw_screen(self):
+        self.DISPLAY_SURF.fill(pygame.Color(0,0,0))
+        self.draw_flag = False
+        for i in range(0, 32):
+            for j in range(0,64):
+                self.DISPLAY_SURF.fill(self.get_color(self.graphics[(i * 64) + j]), pygame.Rect(j*16, i*16 , 16, 16))
+        return
+    def get_color(self, val):
+        if val == 0:
+            return pygame.Color(0,0,0)
+        else:
+            return pygame.Color(255,255,255)
+    def process_blocking_keypress(self,key):
+        value = -1
+        if event.key in self.key_array:
+            #A recognized key has been pressed, so stop blocking and acknowledge the input
+            self.blocking_keypress = False
+            value = self.key_array.index(event.key)
+            self.set_register(rts_keypress, value)
+        else:
+            #No recognized key has been pressed, so keep blocking until one has
+            self.blocking_keypress = True
+        return
+    def is_awaiting_blocking_input(self):
+        return self.blocking_keypress
+    def is_to_be_drawn(self):
+        return self.draw_flag
+    def update_display(self):
+        pygame.display.update()
+        return
+    def event_handler_loop(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-            elif (event.type == pygame.KEYDOWN) and (key_delay > key_threshold):
-                myemu.blocking_keypress = False
-                process_input(myemu, pygame.key.get_pressed())
-                key_delay = 0
-        if (myemu.draw_flag):
-            DISPLAY_SURF.fill(pygame.Color(0,0,0))
-            draw_screen(myemu, DISPLAY_SURF)
-            myemu.draw_flag = False
-            pygame.display.update()
-        pygame.time.delay(1)
+            elif (event.type == pygame.KEYDOWN) and (self.key_delay >= self.key_threshold):
+                if not self.is_awaiting_blocking_input():
+                    self.process_input(pygame.key.get_pressed())
+                    self.reset_key_delay()
+                else:
+                    self.process_blocking_keypress(event)
+        return
+    def increment_key_delay(self, micros):
+        self.key_delay += micros
+    def reset_key_delay(self):
+        self.key_delay = 0
+    def run(self):
+        start = datetime.now()
+        while True:
+            newtime = datetime.now()
+            delta_us = newtime - start
+            self.increment_key_delay(delta_us.microseconds)
+            start = newtime
+            if not self.is_awaiting_blocking_input():
+                self.emulate_instruction(delta_us.microseconds)
+            self.event_handler_loop()
+            if (self.is_to_be_drawn()):       
+                self.draw_screen()
+                self.update_display()
+            pygame.time.delay(1)
+        return
+        
+
+if __name__ == '__main__':
+    myemu = SDLChip8(2000, "PONG2")
+    myemu.run()
+    
             
