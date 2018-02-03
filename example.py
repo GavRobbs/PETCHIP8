@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import pygame, sys
 from pygame.locals import *
+import winsound
 
 class SDLChip8(chip8.PETChip8CPU):
     def __init__(self, spd, filename):
@@ -44,6 +45,16 @@ class SDLChip8(chip8.PETChip8CPU):
             #No recognized key has been pressed, so keep blocking until one has
             self.blocking_keypress = True
         return
+    def check_and_playsound(self):
+        if self.sound_timer >= 0:
+            if self.sound_just_started:
+                self.sound_just_started = False
+                winsound.Beep(440, self.sound_timer)
+            else:
+                self.sound_just_started = False
+        else:
+            winsound.PlaySound(None)
+        return
     def is_awaiting_blocking_input(self):
         return self.blocking_keypress
     def is_to_be_drawn(self):
@@ -77,6 +88,7 @@ class SDLChip8(chip8.PETChip8CPU):
             if not self.is_awaiting_blocking_input():
                 self.emulate_instruction(delta_us.microseconds)
             self.event_handler_loop()
+            self.check_and_playsound()
             if (self.is_to_be_drawn()):       
                 self.draw_screen()
                 self.update_display()
