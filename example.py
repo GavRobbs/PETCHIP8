@@ -98,6 +98,7 @@ class SDLChip8(chip8.PETChip8CPU):
 
 if __name__ == '__main__':
     myemu = SDLChip8(2000, "PONG2")
+    myemu.dump_disassembly("PONG2", "pong2_disasm.asm")
     myemu.run()
     
             

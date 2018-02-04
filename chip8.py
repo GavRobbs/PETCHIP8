@@ -60,6 +60,8 @@ class PETChip8CPU:
             #Return from subroutine; sets the program counter to the address at the top of the stack and subtracts 1 from the stack pointer (pops it)
             self.program_counter = self.stack[self.stack_pointer] + 2
             self.stack_pointer -= 1
+        elif opcode == 0x0000:
+            self.program_counter += 2
         else:
             #Old instruction to jump to a machine code routine at NNN, apparently said to be ignored by most modern interpreters
             self.program_counter = opcode & 0x0FFF
@@ -215,7 +217,7 @@ class PETChip8CPU:
     
     def execute_eleven_series(opcode):
         #Bnnn - Jump to location nnn + V0
-        self.program_counter = self.get_register(0) + (opcode & 0x0FFF)
+        self.program_counter = (self.get_register(0) + (opcode & 0x0FFF)) + 512
         return
     
     def execute_twelve_series(self, opcode):
@@ -308,7 +310,7 @@ class PETChip8CPU:
             data = self.get_register(register)
             self.memory[self.address_register] = int(data/100)
             self.memory[self.address_register + 1] = int((data/10) % 10)
-            self.memory[self.address_register + 2] = int((data/100) % 10)
+            self.memory[self.address_register + 2] = int(data % 10)
         elif last_byte == 0x55:
             #Fx55 - Store registers V0 through Vx in memory starting at location I
             for i in range(0, register + 1):
@@ -399,6 +401,100 @@ class PETChip8CPU:
         print("Program counter", self.program_counter)
         print("Address register", self.address_register)
         print("Am I blocking?", self.blocking_keypress)
+        return
+
+    def dump_disassembly(self, infile, outfile):
+        infile = open(infile, "rb")
+        fdata = list(infile.read())
+        infile.close()
+        outfile = open(outfile, "w")
+        for i in range(0, len(fdata), 2):
+            opcode = self.create_word(fdata[i],fdata[i+1])
+            outfile.write(str(i) + ": ")
+            if opcode < 0x1000:
+                if opcode == 0x00E0:
+                    outfile.write("CLS \n")
+                elif opcode == 0x00EE:
+                    outfile.write("RET \n")
+                else:
+                    outfile.write("SPACE \n")
+            elif opcode < 0x2000:
+                outfile.write("JMPOS " + str((opcode & 0x0FFF) - 512) + "\n")
+            elif opcode < 0x3000:
+                outfile.write("CALL " + str((opcode & 0x0FFF) - 512) + "\n")
+            elif opcode < 0x4000:
+                outfile.write("SE " + "V" + str((opcode & 0xF00) >> 8) + ", " + str(opcode & 0x00FF) + "\n")
+            elif opcode < 0x5000:
+                outfile.write("SNE V" + str((opcode & 0xF00) >> 8) + ", " + str(opcode & 0x00FF) + "\n")
+            elif opcode < 0x6000:
+                outfile.write("SE " + "V" + str((opcode & 0xF00) >> 8) + ", " + str(opcode & 0x00FF) + "\n")
+            elif opcode < 0x7000:
+                outfile.write("LD " + "V" + str((opcode & 0xF00) >> 8) + ", " + str(opcode & 0x00FF) + "\n")
+            elif opcode < 0x8000:
+                outfile.write("ADD V" + str((opcode & 0xF00) >> 8) + ", " + str(opcode & 0x00FF) + "\n")
+            elif opcode < 0x9000:
+                lesser = opcode & 0x1
+                if lesser == 0:
+                    outfile.write("LD V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 1:
+                    outfile.write("OR V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 2:
+                    outfile.write("AND V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 3:
+                    outfile.write("XOR V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 4:
+                    outfile.write("ADD V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 5:
+                    outfile.write("SUB V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 6:
+                    outfile.write("SHR V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 7:
+                    outfile.write("SUBN V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                elif lesser == 0xE:
+                    outfile.write("SHL V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+                else:
+                    outfile.write("Not implemented \n")
+            elif opcode < 0xA000:
+                outfile.write("SNE V" +  str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + "\n")
+            elif opcode < 0xB000:
+                outfile.write("LD I, " + str(opcode & 0xFFF) + "\n")
+            elif opcode < 0xC000:
+                outfile.write("JP V" + str(opcode & 0xFFF) + "\n")
+            elif opcode < 0xD000:
+                outfile.write("RAND V" + str((opcode & 0xF00) >> 8) + " " + str((opcode & 0x00FF)) + "\n")
+            elif opcode < 0xE000:
+                outfile.write("DRW V" + str((opcode & 0xF00) >> 8) + ", V" + str((opcode & 0x00F0) >> 4) + ", " + str(opcode & 0x000F) + "\n")
+            elif opcode < 0xF000:
+                lesser = opcode & 0xFF
+                if lesser == 0x9E:
+                    outfile.write("SKP V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0xA1:
+                    outfile.write("SKNP V" + str((opcode & 0x0F00) >> 8) + "\n")
+                else:
+                    outfile.write("Unimplemented \n")
+            else:
+                lesser = opcode & 0xFF
+                if lesser == 0x07:
+                    outfile.write("LD V" + str((opcode & 0x0F00) >> 8) + ", DT \n")
+                elif lesser == 0x0A:
+                    outfile.write("LD V" + str((opcode & 0x0F00) >> 8) + ", K \n")
+                elif lesser == 0x15:
+                    outfile.write("LD DT, V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x18:
+                    outfile.write("LD ST, V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x1E:
+                    outfile.write("ADD I, V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x29:
+                    outfile.write("LD F, V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x33:
+                    outfile.write("LD B, V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x55:
+                    outfile.write("LD [I], V" + str((opcode & 0x0F00) >> 8) + "\n")
+                elif lesser == 0x65:
+                    outfile.write("LD V" + str((opcode & 0x0F00) >> 8) + ", [I]\n")
+                else:
+                    outfile.write(str(opcode) + "\n")
+        outfile.close()
         return
 
     def draw_screen(self): #To be implemented by the derived class
